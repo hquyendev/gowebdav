@@ -6,6 +6,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"os"
 	"path"
 	"strings"
 )
@@ -14,21 +15,32 @@ func (c *Client) req(method, path string, body io.Reader, intercept func(*http.R
 	// Tee the body, because if authorization fails we will need to read from it again.
 	var r *http.Request
 	var ba bytes.Buffer
+	// bb := io.TeeReader(body, &ba)
 
 	if body == nil {
 		r, err = http.NewRequest(method, PathEscape(Join(c.root, path)), nil)
 	} else {
-		writer := multipart.NewWriter(&ba)
-		part, err := writer.CreateFormFile("file", path)
-		if err != nil {
-			return nil, err
+
+		switch body.(type) {
+		case *bytes.Buffer, *bytes.Reader, *strings.Reader:
+			bb := io.TeeReader(body, &ba)
+			r, err = http.NewRequest(method, PathEscape(Join(c.root, path)), bb)
+
+		case *os.File:
+			writer := multipart.NewWriter(&ba)
+			part, err := writer.CreateFormFile("file", path)
+			if err != nil {
+				return nil, err
+			}
+			_, err = io.Copy(part, body)
+			err = writer.Close()
+			if err != nil {
+				return nil, err
+			}
+			r, err = http.NewRequest(method, PathEscape(Join(c.root, path)), &ba)
+		default:
+
 		}
-		_, err = io.Copy(part, body)
-		err = writer.Close()
-		if err != nil {
-			return nil, err
-		}
-		r, err = http.NewRequest(method, PathEscape(Join(c.root, path)), &ba)
 	}
 
 	if err != nil {
